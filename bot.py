@@ -68,13 +68,28 @@ async def main():
     scheduler.start()
 
     logger.info("Бот запущен и ожидает сообщений...")
-    await application.run_polling()
-
-if __name__ == "__main__":
-    # Исправленный запуск для Python 3.13
+    
     try:
-        asyncio.get_event_loop().run_until_complete(main())
-    except KeyboardInterrupt:
-        logger.info("Бот остановлен")
+        await application.run_polling()
+    except asyncio.CancelledError:
+        logger.info("Получен сигнал завершения")
     except Exception as e:
         logger.critical(f"Критическая ошибка: {e}")
+    finally:
+        scheduler.shutdown()
+        logger.info("Бот завершает работу")
+
+if __name__ == "__main__":
+    # Новый способ запуска для Python 3.13
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен по запросу пользователя")
+    except Exception as e:
+        logger.critical(f"Фатальная ошибка: {e}")
+    finally:
+        loop.close()
+        logger.info("Event loop закрыт")
