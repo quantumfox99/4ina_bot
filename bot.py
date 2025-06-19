@@ -5,6 +5,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import requests
 import os
+import signal
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENWEATHER_TOKEN = os.getenv("OPENWEATHER_TOKEN")
@@ -53,43 +54,56 @@ async def send_weather(application):
         except Exception as e:
             logger.error(f"Ошибка при отправке для {user}: {e}")
 
-async def main():
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
+class BotRunner:
+    def __init__(self):
+        self.application = None
+        self.scheduler = None
+        self.loop = None
 
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        send_weather,
-        "cron",
-        hour=9,
-        minute=0,
-        args=[application]
-    )
-    scheduler.start()
+    async def run(self):
+        self.loop = asyncio.get_event_loop()
+        
+        # Обработка сигналов завершения
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            self.loop.add_signal_handler(
+                sig,
+                lambda: asyncio.create_task(self.shutdown())
+            
+        self.application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+        self.application.add_handler(CommandHandler("start", start))
 
-    logger.info("Бот запущен и ожидает сообщений...")
-    
-    try:
-        await application.run_polling()
-    except asyncio.CancelledError:
+        self.scheduler = AsyncIOScheduler()
+        self.scheduler.add_job(
+            send_weather,
+            "cron",
+            hour=9,
+            minute=0,
+            args=[self.application]
+        )
+        self.scheduler.start()
+
+        logger.info("Бот запущен и ожидает сообщений...")
+        await self.application.run_polling()
+
+    async def shutdown(self):
         logger.info("Получен сигнал завершения")
-    except Exception as e:
-        logger.critical(f"Критическая ошибка: {e}")
-    finally:
-        scheduler.shutdown()
-        logger.info("Бот завершает работу")
+        if self.scheduler:
+            self.scheduler.shutdown()
+        if self.application:
+            await self.application.shutdown()
+        logger.info("Бот завершил работу")
 
-if __name__ == "__main__":
-    # Новый способ запуска для Python 3.13
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+def main():
+    runner = BotRunner()
     
     try:
-        loop.run_until_complete(main())
+        asyncio.run(runner.run())
     except KeyboardInterrupt:
         logger.info("Бот остановлен по запросу пользователя")
     except Exception as e:
         logger.critical(f"Фатальная ошибка: {e}")
     finally:
-        loop.close()
-        logger.info("Event loop закрыт")
+        logger.info("Приложение завершено")
+
+if __name__ == "__main__":
+    main()
