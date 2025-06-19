@@ -16,8 +16,8 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENWEATHER_TOKEN = os.getenv("OPENWEATHER_TOKEN")
 
 USERS = [
-    {"chat_id": 123456789, "name": "Витя", "city": "Warsaw", "timezone": "Europe/Warsaw", "role": "admin"},
-    {"chat_id": 987654321, "name": "Женя", "city": "Warsaw", "timezone": "Europe/Warsaw", "role": "user"},
+    {"chat_id": 123456789, "name": "Витя", "city": "Warsaw", "timezone": "Europe/Warsaw", "role": "user"},
+    {"chat_id": 6425423245, "name": "Женя", "city": "Warsaw", "timezone": "Europe/Warsaw", "role": "admin"},
     {"chat_id": 111222333, "name": "Рома", "city": "Rivne", "timezone": "Europe/Kyiv", "role": "user"},
     {"chat_id": 444555666, "name": "Витек", "city": "Kelowna", "timezone": "America/Vancouver", "role": "user"},
     {"chat_id": 777888999, "name": "Никита", "city": "Warsaw", "timezone": "Europe/Warsaw", "role": "user"},
