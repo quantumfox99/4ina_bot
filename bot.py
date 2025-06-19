@@ -54,50 +54,45 @@ async def send_weather(application):
         except Exception as e:
             logger.error(f"Ошибка при отправке для {user}: {e}")
 
-class BotRunner:
-    def __init__(self):
-        self.application = None
-        self.scheduler = None
-        self.loop = None
+async def run_bot():
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
 
-    async def run(self):
-        self.loop = asyncio.get_event_loop()
-        
-        # Обработка сигналов завершения
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            self.loop.add_signal_handler(
-                sig,
-                lambda: asyncio.create_task(self.shutdown())
-            
-        self.application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-        self.application.add_handler(CommandHandler("start", start))
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        send_weather,
+        "cron",
+        hour=9,
+        minute=0,
+        args=[application]
+    )
+    scheduler.start()
 
-        self.scheduler = AsyncIOScheduler()
-        self.scheduler.add_job(
-            send_weather,
-            "cron",
-            hour=9,
-            minute=0,
-            args=[self.application]
-        )
-        self.scheduler.start()
-
-        logger.info("Бот запущен и ожидает сообщений...")
-        await self.application.run_polling()
-
-    async def shutdown(self):
+    logger.info("Бот запущен и ожидает сообщений...")
+    
+    # Создаем и регистрируем обработчик сигналов
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+    
+    def signal_handler():
         logger.info("Получен сигнал завершения")
-        if self.scheduler:
-            self.scheduler.shutdown()
-        if self.application:
-            await self.application.shutdown()
+        stop_event.set()
+    
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, signal_handler)
+    
+    try:
+        async with application:
+            await application.start()
+            await stop_event.wait()  # Ожидаем сигнала завершения
+    finally:
+        scheduler.shutdown()
+        await application.stop()
         logger.info("Бот завершил работу")
 
 def main():
-    runner = BotRunner()
-    
     try:
-        asyncio.run(runner.run())
+        asyncio.run(run_bot())
     except KeyboardInterrupt:
         logger.info("Бот остановлен по запросу пользователя")
     except Exception as e:
