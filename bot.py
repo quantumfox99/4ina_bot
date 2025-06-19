@@ -1,104 +1,100 @@
-import logging
 import asyncio
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import requests
 import os
-import signal
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from datetime import datetime
+import pytz
+import random
+import logging
+
+# Логгирование
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENWEATHER_TOKEN = os.getenv("OPENWEATHER_TOKEN")
 
-if not TELEGRAM_TOKEN or not OPENWEATHER_TOKEN:
-    raise ValueError("Токены TELEGRAM_TOKEN и OPENWEATHER_TOKEN не заданы!")
+USERS = [
+    {"chat_id": 123456789, "name": "Витя", "city": "Warsaw", "timezone": "Europe/Warsaw", "role": "admin"},
+    {"chat_id": 987654321, "name": "Женя", "city": "Warsaw", "timezone": "Europe/Warsaw", "role": "user"},
+    {"chat_id": 111222333, "name": "Рома", "city": "Rivne", "timezone": "Europe/Kyiv", "role": "user"},
+    {"chat_id": 444555666, "name": "Витек", "city": "Kelowna", "timezone": "America/Vancouver", "role": "user"},
+    {"chat_id": 777888999, "name": "Никита", "city": "Warsaw", "timezone": "Europe/Warsaw", "role": "user"},
+]
 
-USERS = {
-    "Женя": {"chat_id": "kkkv22", "city": "Warsaw"},
-    "Никита": {"chat_id": "nikita_chat_id", "city": "Warsaw"},
-    "Рома": {"chat_id": "roman_babun", "city": "Rivne"},
-    "Витек": {"chat_id": "viktip09", "city": "Kelowna"},
-}
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Бот запущен и работает!")
+PREDICTIONS = [
+    "Сегодня тебе улыбнётся удача!",
+    "Будь осторожен в пути.",
+    "Жди хорошие новости вечером.",
+    "Идеальный день, чтобы начать что-то новое!"
+]
 
 def get_weather(city: str) -> str:
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_TOKEN}&units=metric&lang=ru"
-    try:
-        response = requests.get(url).json()
-        if response.get("cod") != 200:
-            return "Не удалось получить погоду."
-        weather = response["weather"][0]["description"]
-        temp = response["main"]["temp"]
-        return f"Погода в {city}: {weather}, {temp}°C"
-    except Exception as e:
-        logger.error(f"Ошибка запроса погоды: {e}")
-        return "Ошибка при запросе к API."
+    return f"Погода в {city}: +20°C, облачно"
+
+def main_admin_keyboard():
+    keyboard = [
+        [KeyboardButton("🔍 Поиск запчасти"), KeyboardButton("🚗 Выбор модели")],
+        [KeyboardButton("🛒 Корзина"), KeyboardButton("🔁 Сброс поиска")],
+        [KeyboardButton("🔄 Синхронизировать"), KeyboardButton("📚 Логи запросов")],
+        [KeyboardButton("👥 Список пользователей")],
+    ]
+    return ReplyKeyboardMarkup(
+        keyboard,
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        input_field_placeholder="Выберите действие",
+        is_persistent=True,
+    )
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user = next((u for u in USERS if u["chat_id"] == user_id), None)
+    logger.info(f"Получен /start от {user_id}")
+
+    if user:
+        text = f"Привет, {user['name']}!"
+        reply_markup = main_admin_keyboard() if user["role"] == "admin" else None
+        await update.message.reply_text(text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text("Вы не зарегистрированы.")
+
+async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"Ваш chat_id: `{update.effective_user.id}`", parse_mode="Markdown")
+
+async def log_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    logger.info(f"Сообщение от {user.id} ({user.first_name}): {update.message.text}")
 
 async def send_weather(application):
-    for user, data in USERS.items():
+    now_utc = datetime.now(pytz.utc)
+    for user in USERS:
         try:
-            weather = get_weather(data["city"])
-            await application.bot.send_message(
-                chat_id=data["chat_id"],
-                text=weather
-            )
-            logger.info(f"Погода отправлена для {user}")
+            if not user.get("chat_id"):
+                continue
+            local_tz = pytz.timezone(user["timezone"])
+            local_now = now_utc.astimezone(local_tz)
+            if local_now.hour != 7 or local_now.minute > 10:
+                continue
+            message = f"{get_weather(user['city'])}\nПредсказание: {random.choice(PREDICTIONS)}"
+            await application.bot.send_message(chat_id=user["chat_id"], text=message)
         except Exception as e:
-            logger.error(f"Ошибка при отправке для {user}: {e}")
+            logger.error(f"Ошибка для {user['name']}: {e}")
 
-async def run_bot():
+async def main():
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("id", get_id))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, log_all_messages))
 
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        send_weather,
-        "cron",
-        hour=9,
-        minute=0,
-        args=[application]
-    )
+    scheduler.add_job(lambda: asyncio.create_task(send_weather(application)), "interval", minutes=10)
     scheduler.start()
 
     logger.info("Бот запущен и ожидает сообщений...")
-    
-    # Создаем и регистрируем обработчик сигналов
-    loop = asyncio.get_running_loop()
-    stop_event = asyncio.Event()
-    
-    def signal_handler():
-        logger.info("Получен сигнал завершения")
-        stop_event.set()
-    
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, signal_handler)
-    
-    try:
-        async with application:
-            await application.start()
-            await stop_event.wait()  # Ожидаем сигнала завершения
-    finally:
-        scheduler.shutdown()
-        await application.stop()
-        logger.info("Бот завершил работу")
-
-def main():
-    try:
-        asyncio.run(run_bot())
-    except KeyboardInterrupt:
-        logger.info("Бот остановлен по запросу пользователя")
-    except Exception as e:
-        logger.critical(f"Фатальная ошибка: {e}")
-    finally:
-        logger.info("Приложение завершено")
+    await application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
